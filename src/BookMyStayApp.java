@@ -1,13 +1,32 @@
+import java.io.*;
 import java.util.*;
 
 /**
- * BookMyStayApp v6.0
- * Demonstrates concurrent booking with thread safety.
+ * BookMyStayApp v7.0
+ * Demonstrates file-based persistence and system recovery.
  */
 
 public class BookMyStayApp {
 
     public static void main(String[] args) {
+
+        PersistenceService persistence = new PersistenceService();
+
+        // Try to restore previous state
+        SystemState state = persistence.loadState();
+
+        RoomInventory inventory;
+        BookingHistory history;
+
+        if (state != null) {
+            System.out.println("System state restored from file.");
+            inventory = state.inventory;
+            history = state.history;
+        } else {
+            System.out.println("No previous state found. Starting fresh.");
+            inventory = new RoomInventory();
+            history = new BookingHistory();
+        }
 
         List<Room> rooms = Arrays.asList(
                 new SingleRoom(),
@@ -15,118 +34,103 @@ public class BookMyStayApp {
                 new SuiteRoom()
         );
 
-        RoomInventory inventory = new RoomInventory();
-        BookingHistory history = new BookingHistory();
         BookingValidator validator = new BookingValidator(rooms, inventory);
+        BookingService bookingService = new BookingService(history, validator);
 
-        BookingRequestQueue sharedQueue = new BookingRequestQueue();
+        BookingRequestQueue queue = new BookingRequestQueue();
 
-        // Simulate many users submitting at once
-        sharedQueue.addRequest(new Reservation("Alice", "Single Room"));
-        sharedQueue.addRequest(new Reservation("Bob", "Single Room"));
-        sharedQueue.addRequest(new Reservation("Charlie", "Single Room"));
-        sharedQueue.addRequest(new Reservation("David", "Double Room"));
-        sharedQueue.addRequest(new Reservation("Eve", "Suite Room"));
+        queue.addRequest(new Reservation("Alice", "Single Room"));
+        queue.addRequest(new Reservation("Bob", "Double Room"));
 
-        ConcurrentBookingProcessor processor =
-                new ConcurrentBookingProcessor(sharedQueue, inventory, history, validator);
+        bookingService.processBookings(queue, inventory);
 
-        processor.startProcessing();
+        // Save state before exit
+        persistence.saveState(new SystemState(inventory, history));
 
-        // Wait before reporting
-        try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
-
-        BookingReportService report = new BookingReportService();
-        report.displayAllBookings(history);
+        System.out.println("System state saved. Application exiting.");
     }
 }
 
 /* ===========================
-   Concurrent Processor
+   Serializable Wrapper
    =========================== */
 
-class ConcurrentBookingProcessor {
+class SystemState implements Serializable {
+    RoomInventory inventory;
+    BookingHistory history;
 
-    private BookingRequestQueue queue;
-    private RoomInventory inventory;
-    private BookingHistory history;
-    private BookingValidator validator;
-
-    public ConcurrentBookingProcessor(
-            BookingRequestQueue queue,
-            RoomInventory inventory,
-            BookingHistory history,
-            BookingValidator validator) {
-
-        this.queue = queue;
+    public SystemState(RoomInventory inventory, BookingHistory history) {
         this.inventory = inventory;
         this.history = history;
-        this.validator = validator;
     }
+}
 
-    public void startProcessing() {
+/* ===========================
+   Persistence Service
+   =========================== */
 
-        for (int i = 0; i < 3; i++) {
-            Thread t = new Thread(new BookingWorker(), "Worker-" + i);
-            t.start();
+class PersistenceService {
+
+    private static final String FILE_NAME = "hotel_state.dat";
+
+    public void saveState(SystemState state) {
+
+        try (ObjectOutputStream out =
+                     new ObjectOutputStream(new FileOutputStream(FILE_NAME))) {
+
+            out.writeObject(state);
+            System.out.println("State saved to file.");
+
+        } catch (IOException e) {
+            System.out.println("Failed to save state: " + e.getMessage());
         }
     }
 
-    private class BookingWorker implements Runnable {
+    public SystemState loadState() {
 
-        public void run() {
+        try (ObjectInputStream in =
+                     new ObjectInputStream(new FileInputStream(FILE_NAME))) {
 
-            while (true) {
+            return (SystemState) in.readObject();
 
-                Reservation r;
-
-                synchronized (queue) {
-                    if (queue.isEmpty()) break;
-                    r = queue.next();
-                }
-
-                if (r == null) break;
-
-                try {
-                    validator.validate(r);
-
-                    String roomId;
-                    synchronized (inventory) {
-
-                        if (inventory.getAvailability(r.getRoomType()) <= 0)
-                            throw new Exception("No availability");
-
-                        roomId = r.getRoomType()
-                                .replace(" ", "").toUpperCase()
-                                + "-" + UUID.randomUUID();
-
-                        inventory.decrementAvailability(r.getRoomType());
-                    }
-
-                    r.setAllocatedRoomId(roomId);
-
-                    synchronized (history) {
-                        history.addReservation(r);
-                    }
-
-                    System.out.println(Thread.currentThread().getName()
-                            + " confirmed " + r.getReservationId()
-                            + " -> " + roomId);
-
-                } catch (Exception e) {
-                    System.out.println(Thread.currentThread().getName()
-                            + " failed: " + e.getMessage());
-                }
-            }
+        } catch (FileNotFoundException e) {
+            return null; // first run
+        } catch (Exception e) {
+            System.out.println("State file corrupted. Starting fresh.");
+            return null;
         }
     }
 }
 
 /* ===========================
-   Inventory (Thread Safe)
+   Reservation
    =========================== */
 
-class RoomInventory {
+class Reservation implements Serializable {
+
+    private static int counter = 1;
+
+    private String reservationId;
+    private String guestName;
+    private String roomType;
+    private boolean cancelled;
+
+    public Reservation(String guestName, String roomType) {
+        this.reservationId = "RES-" + counter++;
+        this.guestName = guestName;
+        this.roomType = roomType;
+    }
+
+    public String getReservationId() { return reservationId; }
+    public String getGuestName() { return guestName; }
+    public String getRoomType() { return roomType; }
+}
+
+/* ===========================
+   Inventory
+   =========================== */
+
+class RoomInventory implements Serializable {
 
     private Map<String, Integer> availability = new HashMap<>();
 
@@ -136,12 +140,93 @@ class RoomInventory {
         availability.put("Suite Room", 1);
     }
 
-    public synchronized int getAvailability(String type) {
+    public int getAvailability(String type) {
         return availability.getOrDefault(type, 0);
     }
 
-    public synchronized void decrementAvailability(String type) {
+    public void decrementAvailability(String type) {
         availability.put(type, getAvailability(type) - 1);
+    }
+}
+
+/* ===========================
+   Booking History
+   =========================== */
+
+class BookingHistory implements Serializable {
+
+    private List<Reservation> list = new ArrayList<>();
+
+    public void addReservation(Reservation r) {
+        list.add(r);
+    }
+
+    public List<Reservation> getAllReservations() {
+        return list;
+    }
+}
+
+/* ===========================
+   Booking Service
+   =========================== */
+
+class BookingService {
+
+    private BookingHistory history;
+    private BookingValidator validator;
+
+    public BookingService(BookingHistory history, BookingValidator validator) {
+        this.history = history;
+        this.validator = validator;
+    }
+
+    public void processBookings(BookingRequestQueue queue, RoomInventory inventory) {
+
+        int counter = 1;
+
+        while (!queue.isEmpty()) {
+
+            Reservation r = queue.next();
+
+            try {
+                validator.validate(r);
+
+                inventory.decrementAvailability(r.getRoomType());
+                history.addReservation(r);
+
+                System.out.println("Confirmed: " + r.getReservationId());
+
+            } catch (Exception e) {
+                System.out.println("Booking failed: " + e.getMessage());
+            }
+        }
+    }
+}
+
+/* ===========================
+   Validator
+   =========================== */
+
+class BookingValidator {
+
+    private Set<String> validTypes = new HashSet<>();
+    private RoomInventory inventory;
+
+    public BookingValidator(List<Room> rooms, RoomInventory inventory) {
+        for (Room r : rooms) validTypes.add(r.getRoomType());
+        this.inventory = inventory;
+    }
+
+    public void validate(Reservation r) throws Exception {
+
+        if (r.getGuestName() == null || r.getGuestName().isEmpty())
+            throw new Exception("Guest name empty");
+
+        if (!validTypes.contains(r.getRoomType()))
+            throw new Exception("Invalid room type");
+
+        if (inventory.getAvailability(r.getRoomType()) <= 0)
+            throw new Exception("No availability");
     }
 }
 
@@ -153,62 +238,16 @@ class BookingRequestQueue {
 
     private Queue<Reservation> queue = new LinkedList<>();
 
-    public synchronized void addRequest(Reservation r) {
-        queue.add(r);
-    }
+    public void addRequest(Reservation r) { queue.add(r); }
 
-    public synchronized Reservation next() {
-        return queue.poll();
-    }
+    public Reservation next() { return queue.poll(); }
 
-    public synchronized boolean isEmpty() {
-        return queue.isEmpty();
-    }
+    public boolean isEmpty() { return queue.isEmpty(); }
 }
 
 /* ===========================
-   Rest of System (unchanged)
+   Room Model
    =========================== */
-
-class Reservation {
-    private static int counter = 1;
-    private String id;
-    private String guest;
-    private String type;
-    private String roomId;
-
-    public Reservation(String guest, String type) {
-        this.id = "RES-" + counter++;
-        this.guest = guest;
-        this.type = type;
-    }
-
-    public String getReservationId() { return id; }
-    public String getGuestName() { return guest; }
-    public String getRoomType() { return type; }
-    public void setAllocatedRoomId(String id) { this.roomId = id; }
-}
-
-class BookingHistory {
-    private List<Reservation> list = new ArrayList<>();
-    public synchronized void addReservation(Reservation r) { list.add(r); }
-    public List<Reservation> getAllReservations() { return list; }
-}
-
-class BookingValidator {
-    private Set<String> validTypes = new HashSet<>();
-    private RoomInventory inventory;
-
-    public BookingValidator(List<Room> rooms, RoomInventory inventory) {
-        for (Room r : rooms) validTypes.add(r.getRoomType());
-        this.inventory = inventory;
-    }
-
-    public void validate(Reservation r) throws Exception {
-        if (!validTypes.contains(r.getRoomType()))
-            throw new Exception("Invalid room type");
-    }
-}
 
 abstract class Room {
     protected String roomType;
@@ -219,13 +258,3 @@ abstract class Room {
 class SingleRoom extends Room { public SingleRoom() { super("Single Room"); } }
 class DoubleRoom extends Room { public DoubleRoom() { super("Double Room"); } }
 class SuiteRoom extends Room { public SuiteRoom() { super("Suite Room"); } }
-
-class BookingReportService {
-    public void displayAllBookings(BookingHistory history) {
-        for (Reservation r : history.getAllReservations()) {
-            System.out.println(r.getReservationId()
-                    + " | " + r.getGuestName()
-                    + " | " + r.getRoomType());
-        }
-    }
-}
