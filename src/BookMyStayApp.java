@@ -1,22 +1,14 @@
 import java.util.*;
 
 /**
- * BookMyStayApp v4.0
- * Demonstrates:
- * - FIFO booking
- * - Add-on services
- * - Booking history & reporting
- * - Input validation & custom exceptions
+ * BookMyStayApp v5.0
+ * Complete lifecycle:
+ * Booking → Validation → Add-ons → History → Reporting → Cancellation
  */
 
 public class BookMyStayApp {
 
     public static void main(String[] args) {
-
-        System.out.println("====================================");
-        System.out.println("     Welcome to BookMyStay");
-        System.out.println("  Hotel Booking System v4.0");
-        System.out.println("====================================");
 
         List<Room> rooms = Arrays.asList(
                 new SingleRoom(),
@@ -31,63 +23,22 @@ public class BookMyStayApp {
 
         BookingRequestQueue queue = new BookingRequestQueue();
 
-        // Some valid and invalid requests
         queue.addRequest(new Reservation("Alice", "Single Room"));
-        queue.addRequest(new Reservation("", "Suite Room"));          // invalid name
-        queue.addRequest(new Reservation("Bob", "Penthouse"));        // invalid room
-        queue.addRequest(new Reservation("Charlie", "Double Room"));
+        queue.addRequest(new Reservation("Bob", "Double Room"));
 
         bookingService.processBookings(queue, inventory);
 
-        // Reporting
+        // Cancellation
+        CancellationService cancellationService =
+                new CancellationService(history, inventory);
+
+        cancellationService.cancelReservation("RES-1");
+        cancellationService.cancelReservation("RES-1"); // duplicate attempt
+
+        // Reporting after cancellation
         BookingReportService report = new BookingReportService();
         report.displayAllBookings(history);
-        report.generateSummary(history);
     }
-}
-
-/* ===========================
-   Custom Exceptions
-   =========================== */
-
-class InvalidRoomTypeException extends Exception {
-    public InvalidRoomTypeException(String msg) { super(msg); }
-}
-
-class NoAvailabilityException extends Exception {
-    public NoAvailabilityException(String msg) { super(msg); }
-}
-
-class InvalidReservationException extends Exception {
-    public InvalidReservationException(String msg) { super(msg); }
-}
-
-/* ===========================
-   Room Model
-   =========================== */
-
-abstract class Room {
-    protected String roomType;
-    protected double price;
-
-    public Room(String roomType, double price) {
-        this.roomType = roomType;
-        this.price = price;
-    }
-
-    public String getRoomType() { return roomType; }
-}
-
-class SingleRoom extends Room {
-    public SingleRoom() { super("Single Room", 2500); }
-}
-
-class DoubleRoom extends Room {
-    public DoubleRoom() { super("Double Room", 4000); }
-}
-
-class SuiteRoom extends Room {
-    public SuiteRoom() { super("Suite Room", 8000); }
 }
 
 /* ===========================
@@ -101,16 +52,67 @@ class Reservation {
     private String reservationId;
     private String guestName;
     private String roomType;
+    private String allocatedRoomId;
+    private boolean cancelled;
 
     public Reservation(String guestName, String roomType) {
         this.reservationId = "RES-" + counter++;
         this.guestName = guestName;
         this.roomType = roomType;
+        this.cancelled = false;
     }
 
     public String getReservationId() { return reservationId; }
     public String getGuestName() { return guestName; }
     public String getRoomType() { return roomType; }
+
+    public void setAllocatedRoomId(String id) {
+        this.allocatedRoomId = id;
+    }
+
+    public String getAllocatedRoomId() { return allocatedRoomId; }
+
+    public boolean isCancelled() { return cancelled; }
+
+    public void cancel() { this.cancelled = true; }
+}
+
+/* ===========================
+   Cancellation Service
+   =========================== */
+
+class CancellationService {
+
+    private BookingHistory history;
+    private RoomInventory inventory;
+    private Stack<String> releasedRoomIds = new Stack<>();
+
+    public CancellationService(BookingHistory history, RoomInventory inventory) {
+        this.history = history;
+        this.inventory = inventory;
+    }
+
+    public void cancelReservation(String reservationId) {
+
+        Reservation r = history.findReservation(reservationId);
+
+        if (r == null) {
+            System.out.println("Cancellation failed: Reservation not found.");
+            return;
+        }
+
+        if (r.isCancelled()) {
+            System.out.println("Cancellation failed: Already cancelled.");
+            return;
+        }
+
+        // rollback
+        releasedRoomIds.push(r.getAllocatedRoomId());
+        inventory.incrementAvailability(r.getRoomType());
+        r.cancel();
+
+        System.out.println("Reservation cancelled: " + reservationId);
+    }
 }
 
 /* ===========================
@@ -127,72 +129,16 @@ class RoomInventory {
         availability.put("Suite Room", 1);
     }
 
-    public int getAvailability(String roomType) {
-        return availability.getOrDefault(roomType, 0);
+    public int getAvailability(String type) {
+        return availability.getOrDefault(type, 0);
     }
 
-    public void decrementAvailability(String roomType) throws NoAvailabilityException {
-        int current = getAvailability(roomType);
-        if (current <= 0) {
-            throw new NoAvailabilityException("No rooms left for " + roomType);
-        }
-        availability.put(roomType, current - 1);
-    }
-}
-
-/* ===========================
-   Booking Validator
-   =========================== */
-
-class BookingValidator {
-
-    private Set<String> validRoomTypes = new HashSet<>();
-    private RoomInventory inventory;
-
-    public BookingValidator(List<Room> rooms, RoomInventory inventory) {
-        for (Room r : rooms) validRoomTypes.add(r.getRoomType());
-        this.inventory = inventory;
+    public void decrementAvailability(String type) {
+        availability.put(type, getAvailability(type) - 1);
     }
 
-    public void validate(Reservation r)
-            throws InvalidReservationException,
-            InvalidRoomTypeException,
-            NoAvailabilityException {
-
-        if (r.getGuestName() == null || r.getGuestName().trim().isEmpty()) {
-            throw new InvalidReservationException("Guest name cannot be empty.");
-        }
-
-        if (!validRoomTypes.contains(r.getRoomType())) {
-            throw new InvalidRoomTypeException(
-                    "Invalid room type: " + r.getRoomType());
-        }
-
-        if (inventory.getAvailability(r.getRoomType()) <= 0) {
-            throw new NoAvailabilityException(
-                    "No availability for " + r.getRoomType());
-        }
-    }
-}
-
-/* ===========================
-   Booking Queue
-   =========================== */
-
-class BookingRequestQueue {
-
-    private Queue<Reservation> queue = new LinkedList<>();
-
-    public void addRequest(Reservation r) {
-        queue.add(r);
-    }
-
-    public Reservation next() {
-        return queue.poll();
-    }
-
-    public boolean isEmpty() {
-        return queue.isEmpty();
+    public void incrementAvailability(String type) {
+        availability.put(type, getAvailability(type) + 1);
     }
 }
 
@@ -202,14 +148,21 @@ class BookingRequestQueue {
 
 class BookingHistory {
 
-    private List<Reservation> history = new ArrayList<>();
+    private List<Reservation> list = new ArrayList<>();
 
     public void addReservation(Reservation r) {
-        history.add(r);
+        list.add(r);
+    }
+
+    public Reservation findReservation(String id) {
+        for (Reservation r : list)
+            if (r.getReservationId().equals(id))
+                return r;
+        return null;
     }
 
     public List<Reservation> getAllReservations() {
-        return Collections.unmodifiableList(history);
+        return list;
     }
 }
 
@@ -237,23 +190,75 @@ class BookingService {
             try {
                 validator.validate(r);
 
-                String roomId = r.getRoomType().replace(" ", "").toUpperCase()
+                String roomId = r.getRoomType()
+                        .replace(" ", "").toUpperCase()
                         + "-" + roomCounter++;
 
                 inventory.decrementAvailability(r.getRoomType());
 
+                r.setAllocatedRoomId(roomId);
                 history.addReservation(r);
 
                 System.out.println("Confirmed: " + r.getReservationId()
                         + " -> " + roomId);
 
             } catch (Exception e) {
-                System.out.println("Booking failed for "
-                        + r.getReservationId()
-                        + ": " + e.getMessage());
+                System.out.println("Booking failed: " + e.getMessage());
             }
         }
     }
+}
+
+/* ===========================
+   Validator
+   =========================== */
+
+class BookingValidator {
+
+    private Set<String> validRoomTypes = new HashSet<>();
+    private RoomInventory inventory;
+
+    public BookingValidator(List<Room> rooms, RoomInventory inventory) {
+        for (Room r : rooms) validRoomTypes.add(r.getRoomType());
+        this.inventory = inventory;
+    }
+
+    public void validate(Reservation r) throws Exception {
+
+        if (r.getGuestName() == null || r.getGuestName().isEmpty())
+            throw new Exception("Guest name empty.");
+
+        if (!validRoomTypes.contains(r.getRoomType()))
+            throw new Exception("Invalid room type.");
+
+        if (inventory.getAvailability(r.getRoomType()) <= 0)
+            throw new Exception("No rooms available.");
+    }
+}
+
+/* ===========================
+   Supporting Classes
+   =========================== */
+
+abstract class Room {
+    protected String roomType;
+    public Room(String type) { roomType = type; }
+    public String getRoomType() { return roomType; }
+}
+
+class SingleRoom extends Room { public SingleRoom() { super("Single Room"); } }
+class DoubleRoom extends Room { public DoubleRoom() { super("Double Room"); } }
+class SuiteRoom extends Room { public SuiteRoom() { super("Suite Room"); } }
+
+class BookingRequestQueue {
+
+    private Queue<Reservation> queue = new LinkedList<>();
+
+    public void addRequest(Reservation r) { queue.add(r); }
+
+    public Reservation next() { return queue.poll(); }
+
+    public boolean isEmpty() { return queue.isEmpty(); }
 }
 
 /* ===========================
@@ -263,26 +268,15 @@ class BookingService {
 class BookingReportService {
 
     public void displayAllBookings(BookingHistory history) {
-        for (Reservation r : history.getAllReservations()) {
-            System.out.println(r.getReservationId()
-                    + " | " + r.getGuestName()
-                    + " | " + r.getRoomType());
-        }
-    }
-
-    public void generateSummary(BookingHistory history) {
-
-        Map<String, Integer> map = new HashMap<>();
 
         for (Reservation r : history.getAllReservations()) {
-            map.put(r.getRoomType(),
-                    map.getOrDefault(r.getRoomType(), 0) + 1);
+
+            System.out.println(
+                    r.getReservationId() + " | "
+                            + r.getGuestName() + " | "
+                            + r.getRoomType() + " | "
+                            + (r.isCancelled() ? "CANCELLED" : "ACTIVE")
+            );
         }
-
-        System.out.println("Total bookings: "
-                + history.getAllReservations().size());
-
-        for (String k : map.keySet())
-            System.out.println(k + ": " + map.get(k));
     }
 }
