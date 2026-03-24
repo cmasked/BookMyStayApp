@@ -1,6 +1,19 @@
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Queue;
+import java.util.LinkedList;
+
+/**
+ * BookMyStayApp
+ *
+ * Hotel Booking Management System demonstrating
+ * abstraction, centralized inventory, read-only search,
+ * and FIFO booking request handling.
+ *
+ * @author Varad
+ * @version 1.0
+ */
 
 public class BookMyStayApp {
 
@@ -25,8 +38,21 @@ public class BookMyStayApp {
 
         System.out.println("\nSearching Available Rooms...\n");
 
-        // Perform search (read-only operation)
+        // Perform read-only search
         searchService.searchAvailableRooms(rooms, inventory);
+
+        // Initialize booking request queue
+        BookingRequestQueue bookingQueue = new BookingRequestQueue();
+
+        System.out.println("\nGuests submitting booking requests...\n");
+
+        bookingQueue.addRequest(new Reservation("Alice", "Single Room"));
+        bookingQueue.addRequest(new Reservation("Bob", "Double Room"));
+        bookingQueue.addRequest(new Reservation("Charlie", "Suite Room"));
+        bookingQueue.addRequest(new Reservation("David", "Single Room"));
+
+        System.out.println("\nCurrent Booking Request Queue:");
+        bookingQueue.displayQueue();
 
         System.out.println("\nApplication terminated.");
     }
@@ -98,9 +124,7 @@ class SuiteRoom extends Room {
 
 /**
  * RoomInventory
- *
- * Centralized component responsible for managing
- * room availability using a HashMap.
+ * Centralized availability storage
  */
 class RoomInventory {
 
@@ -115,12 +139,10 @@ class RoomInventory {
         availabilityMap.put("Suite Room", 3);
     }
 
-    // Read availability
     public int getAvailability(String roomType) {
         return availabilityMap.getOrDefault(roomType, 0);
     }
 
-    // Update availability (not used in search)
     public void updateAvailability(String roomType, int newCount) {
         availabilityMap.put(roomType, newCount);
     }
@@ -129,8 +151,7 @@ class RoomInventory {
 
 /**
  * RoomSearchService
- *
- * Handles read-only room search operations.
+ * Handles read-only room search
  */
 class RoomSearchService {
 
@@ -140,7 +161,6 @@ class RoomSearchService {
 
             int available = inventory.getAvailability(room.getRoomType());
 
-            // Defensive check: show only available rooms
             if (available > 0) {
 
                 System.out.println("----- Available Room -----");
@@ -148,6 +168,59 @@ class RoomSearchService {
                 System.out.println("Available Rooms: " + available);
                 System.out.println();
             }
+        }
+    }
+}
+
+
+/**
+ * Reservation
+ * Represents a guest booking request
+ */
+class Reservation {
+
+    private String guestName;
+    private String roomType;
+
+    public Reservation(String guestName, String roomType) {
+        this.guestName = guestName;
+        this.roomType = roomType;
+    }
+
+    public String getGuestName() {
+        return guestName;
+    }
+
+    public String getRoomType() {
+        return roomType;
+    }
+}
+
+
+/**
+ * BookingRequestQueue
+ * Manages booking requests using FIFO queue
+ */
+class BookingRequestQueue {
+
+    private Queue<Reservation> requestQueue;
+
+    public BookingRequestQueue() {
+        requestQueue = new LinkedList<>();
+    }
+
+    // Add booking request
+    public void addRequest(Reservation reservation) {
+        requestQueue.add(reservation);
+        System.out.println("Booking request added for " + reservation.getGuestName()
+                + " (" + reservation.getRoomType() + ")");
+    }
+
+    // Display queue
+    public void displayQueue() {
+
+        for (Reservation r : requestQueue) {
+            System.out.println(r.getGuestName() + " requested " + r.getRoomType());
         }
     }
 }
