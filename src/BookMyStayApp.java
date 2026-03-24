@@ -1,12 +1,5 @@
-/**
- * BookMyStayApp
- *
- * Hotel Booking Management System - Demonstration of
- * abstraction, inheritance, polymorphism and static availability.
- *
- * @author Varad
- * @version 1.0
- */
+import java.util.HashMap;
+
 
 public class BookMyStayApp {
 
@@ -19,27 +12,28 @@ public class BookMyStayApp {
 
         System.out.println("\nAvailable Room Types:\n");
 
-        // Polymorphic Room references
+        // Create room objects
         Room single = new SingleRoom();
         Room doubleRoom = new DoubleRoom();
         Room suite = new SuiteRoom();
 
-        // Static availability variables
-        int singleAvailable = 10;
-        int doubleAvailable = 7;
-        int suiteAvailable = 3;
+        // Initialize centralized inventory
+        RoomInventory inventory = new RoomInventory();
 
         System.out.println("----- Single Room -----");
         single.displayDetails();
-        System.out.println("Available Rooms: " + singleAvailable);
+        System.out.println("Available Rooms: " + inventory.getAvailability("Single Room"));
 
         System.out.println("\n----- Double Room -----");
         doubleRoom.displayDetails();
-        System.out.println("Available Rooms: " + doubleAvailable);
+        System.out.println("Available Rooms: " + inventory.getAvailability("Double Room"));
 
         System.out.println("\n----- Suite Room -----");
         suite.displayDetails();
-        System.out.println("Available Rooms: " + suiteAvailable);
+        System.out.println("Available Rooms: " + inventory.getAvailability("Suite Room"));
+
+        System.out.println("\nInventory Snapshot:");
+        inventory.displayInventory();
 
         System.out.println("\nApplication terminated.");
     }
@@ -101,5 +95,45 @@ class SuiteRoom extends Room {
 
     public SuiteRoom() {
         super("Suite Room", 3, 600, 8000);
+    }
+}
+
+
+/**
+ * RoomInventory
+ *
+ * Centralized component responsible for managing
+ * room availability using a HashMap.
+ */
+class RoomInventory {
+
+    private HashMap<String, Integer> availabilityMap;
+
+    // Constructor initializes inventory
+    public RoomInventory() {
+
+        availabilityMap = new HashMap<>();
+
+        availabilityMap.put("Single Room", 10);
+        availabilityMap.put("Double Room", 7);
+        availabilityMap.put("Suite Room", 3);
+    }
+
+    // Get availability
+    public int getAvailability(String roomType) {
+        return availabilityMap.getOrDefault(roomType, 0);
+    }
+
+    // Update availability
+    public void updateAvailability(String roomType, int newCount) {
+        availabilityMap.put(roomType, newCount);
+    }
+
+    // Display entire inventory
+    public void displayInventory() {
+
+        for (String roomType : availabilityMap.keySet()) {
+            System.out.println(roomType + " : " + availabilityMap.get(roomType) + " rooms available");
+        }
     }
 }
